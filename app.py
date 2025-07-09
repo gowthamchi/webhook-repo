@@ -8,7 +8,8 @@ app = Flask(__name__)
 CORS(app)
 
 # MongoDB Atlas Connection (Replace with your credentials)
-MONGO_URI = "mongodb+srv://gowthamreddy:Gowtham2004@cluster0.abcde.mongodb.net/github_events?retryWrites=true&w=majority"
+MONGO_URI = "mongodb+srv://gowthamreddy:Gowtham2004@cluster0.q5mzsyh.mongodb.net/github_events?retryWrites=true&w=majority&appName=Cluster0"
+
 client = MongoClient(MONGO_URI)
 db = client.github_events
 collection = db.events
