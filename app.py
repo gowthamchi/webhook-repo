@@ -1,64 +1,72 @@
 from flask import Flask, request, jsonify, render_template
 from pymongo import MongoClient
 from datetime import datetime
-from flask_cors import CORS
 import os
 
 app = Flask(__name__)
-CORS(app)
 
-# ✅ MongoDB Atlas Connection — update with your actual credentials
-MONGO_URI = "mongodb+srv://gowthamreddy:Gowtham2004@cluster0.q5mzsyh.mongodb.net/github_events?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/')
 client = MongoClient(MONGO_URI)
-db = client.github_events
+db = client.webhookDB
 collection = db.events
 
-# ✅ GitHub Webhook Receiver
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
     event_type = request.headers.get('X-GitHub-Event')
+    author = data.get('pusher', {}).get('name') or data.get('sender', {}).get('login')
+    timestamp = datetime.utcnow().isoformat()
 
-    payload = {}
+    if event_type == 'push':
+        ref = data.get('ref', '')
+        to_branch = ref.split('/')[-1]
+        event = {
+            "author": author,
+            "type": "push",
+            "to_branch": to_branch,
+            "timestamp": timestamp
+        }
+        collection.insert_one(event)
 
-    if event_type == "push":
-        payload["author"] = data["pusher"]["name"]
-        payload["to_branch"] = data["ref"].split("/")[-1]
-        payload["timestamp"] = datetime.utcnow().strftime("%d %B %Y - %I:%M %p UTC")
-        payload["type"] = "push"
+    elif event_type == 'pull_request':
+        action = data['action']
+        if action == 'opened' or action == 'closed':
+            from_branch = data['pull_request']['head']['ref']
+            to_branch = data['pull_request']['base']['ref']
+            merged = data['pull_request'].get('merged', False)
+            event_type_label = "merge" if merged else "pull_request"
+            event = {
+                "author": author,
+                "type": event_type_label,
+                "from_branch": from_branch,
+                "to_branch": to_branch,
+                "timestamp": timestamp
+            }
+            collection.insert_one(event)
 
-    elif event_type == "pull_request":
-        pr = data["pull_request"]
-        payload["author"] = pr["user"]["login"]
-        payload["from_branch"] = pr["head"]["ref"]
-        payload["to_branch"] = pr["base"]["ref"]
-        payload["timestamp"] = datetime.utcnow().strftime("%d %B %Y - %I:%M %p UTC")
-        payload["type"] = "pull_request"
+    return "OK", 200
 
-    elif event_type == "merge":  # Optional (brownie points)
-        payload["author"] = data["sender"]["login"]
-        payload["from_branch"] = data["pull_request"]["head"]["ref"]
-        payload["to_branch"] = data["pull_request"]["base"]["ref"]
-        payload["timestamp"] = datetime.utcnow().strftime("%d %B %Y - %I:%M %p UTC")
-        payload["type"] = "merge"
-
-    else:
-        return jsonify({"msg": "Unhandled event type"}), 200
-
-    collection.insert_one(payload)
-    return jsonify({"msg": "Event stored"}), 200
-
-# ✅ Serve events to frontend
 @app.route('/events')
-def get_events():
-    data = list(collection.find({}, {"_id": 0}).sort("_id", -1))
-    return jsonify(data)
+def events():
+    results = collection.find().sort("timestamp", -1)
+    formatted = []
+    for r in results:
+        if r['type'] == 'push':
+            msg = f"{r['author']} pushed to {r['to_branch']} on {format_time(r['timestamp'])}"
+        elif r['type'] == 'pull_request':
+            msg = f"{r['author']} submitted a pull request from {r['from_branch']} to {r['to_branch']} on {format_time(r['timestamp'])}"
+        elif r['type'] == 'merge':
+            msg = f"{r['author']} merged branch {r['from_branch']} to {r['to_branch']} on {format_time(r['timestamp'])}"
+        formatted.append(msg)
+    return jsonify(formatted)
 
-# ✅ Serve frontend page
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# ✅ Start the Flask server
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+def format_time(timestamp):
+    dt = datetime.fromisoformat(timestamp)
+    return dt.strftime('%d %B %Y - %I:%M %p UTC')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
