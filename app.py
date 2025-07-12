@@ -20,9 +20,12 @@ def webhook():
     if event_type == 'push':
         ref = data.get('ref', '')
         to_branch = ref.split('/')[-1]
+        request_id = data.get('head_commit', {}).get('id', 'unknown')  # ✅ Git commit hash
         event = {
+            "request_id": request_id,
             "author": author,
-            "type": "push",
+            "action": "PUSH",
+            "from_branch": None,
             "to_branch": to_branch,
             "timestamp": timestamp
         }
@@ -30,14 +33,27 @@ def webhook():
 
     elif event_type == 'pull_request':
         action = data['action']
-        if action == 'opened' or action == 'closed':
-            from_branch = data['pull_request']['head']['ref']
-            to_branch = data['pull_request']['base']['ref']
-            merged = data['pull_request'].get('merged', False)
-            event_type_label = "merge" if merged else "pull_request"
+        from_branch = data['pull_request']['head']['ref']
+        to_branch = data['pull_request']['base']['ref']
+        request_id = str(data['pull_request']['id'])  # ✅ PR ID
+        merged = data['pull_request'].get('merged', False)
+
+        if action == 'opened':
             event = {
+                "request_id": request_id,
                 "author": author,
-                "type": event_type_label,
+                "action": "PULL_REQUEST",
+                "from_branch": from_branch,
+                "to_branch": to_branch,
+                "timestamp": timestamp
+            }
+            collection.insert_one(event)
+
+        elif action == 'closed' and merged:
+            event = {
+                "request_id": request_id,
+                "author": author,
+                "action": "MERGE",
                 "from_branch": from_branch,
                 "to_branch": to_branch,
                 "timestamp": timestamp
@@ -51,11 +67,11 @@ def events():
     results = collection.find().sort("timestamp", -1)
     formatted = []
     for r in results:
-        if r['type'] == 'push':
+        if r['action'] == 'PUSH':
             msg = f"{r['author']} pushed to {r['to_branch']} on {format_time(r['timestamp'])}"
-        elif r['type'] == 'pull_request':
+        elif r['action'] == 'PULL_REQUEST':
             msg = f"{r['author']} submitted a pull request from {r['from_branch']} to {r['to_branch']} on {format_time(r['timestamp'])}"
-        elif r['type'] == 'merge':
+        elif r['action'] == 'MERGE':
             msg = f"{r['author']} merged branch {r['from_branch']} to {r['to_branch']} on {format_time(r['timestamp'])}"
         formatted.append(msg)
     return jsonify(formatted)
